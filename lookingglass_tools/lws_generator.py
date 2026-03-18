@@ -138,7 +138,11 @@ def _extract_envelopes(lines: Sequence[str], num_channels: int) -> List[Envelope
 
 def _update_rgb_prefix(lines: Sequence[str], view_index: int) -> List[str]:
     updated_lines = list(lines)
-    rgb_prefix_index = _find_line_with_substring(updated_lines, "SaveRGBImagesPrefix")
+    try:
+        rgb_prefix_index = _find_line_with_substring(updated_lines, "SaveRGBImagesPrefix")
+    except LwsGeneratorError:
+        return updated_lines
+
     line = updated_lines[rgb_prefix_index]
     newline = "\r\n" if line.endswith("\r\n") else "\n"
     stripped = line.rstrip("\r\n")
@@ -153,10 +157,56 @@ def _update_rgb_prefix(lines: Sequence[str], view_index: int) -> List[str]:
     return updated_lines
 
 
+def _insert_rgb_prefix(
+    lines: Sequence[str],
+    rgb_prefix_base: str,
+    newline: str,
+) -> List[str]:
+    updated_lines = list(lines)
+    insertion_line = f"SaveRGBImagesPrefix {rgb_prefix_base}{newline}"
+
+    for anchor_text, insert_after in (
+        ("SaveRGB ", True),
+        ("RGBImageSaver", False),
+        ("OutputFilenameFormat", True),
+    ):
+        for index, line in enumerate(updated_lines):
+            if anchor_text in line:
+                insertion_index = index + 1 if insert_after else index
+                updated_lines.insert(insertion_index, insertion_line)
+                return updated_lines
+
+    updated_lines.append(insertion_line)
+    return updated_lines
+
+
+def _ensure_rgb_prefix(
+    lines: Sequence[str],
+    view_index: int,
+    rgb_prefix_base: str,
+) -> List[str]:
+    if any("SaveRGBImagesPrefix" in line for line in lines):
+        return _update_rgb_prefix(lines, view_index)
+
+    if lines:
+        newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
+    else:
+        newline = "\n"
+
+    cleaned_prefix = re.sub(r"_CAMERA\d+_$", "", rgb_prefix_base)
+    inserted_lines = _insert_rgb_prefix(
+        lines,
+        f"{cleaned_prefix}_CAMERA{view_index:02d}_",
+        newline,
+    )
+    return inserted_lines
+
+
 def create_scene_lines_for_view(
     lines: Sequence[str],
     envelopes: Sequence[Envelope],
     view_index: int,
+    rgb_prefix_base: str,
 ) -> List[str]:
     new_lines: List[str] = []
     start_line = 0
@@ -167,7 +217,7 @@ def create_scene_lines_for_view(
         start_line = envelope.end_index
 
     new_lines.extend(lines[start_line:])
-    return _update_rgb_prefix(new_lines, view_index)
+    return _ensure_rgb_prefix(new_lines, view_index, rgb_prefix_base)
 
 
 def generate_lws_files(
@@ -200,9 +250,15 @@ def generate_lws_files(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths: List[Path] = []
+    default_rgb_prefix = str(output_dir / source_path.stem)
 
     for view_index in range(num_views):
-        scene_lines = create_scene_lines_for_view(lines, envelopes, view_index)
+        scene_lines = create_scene_lines_for_view(
+            lines,
+            envelopes,
+            view_index,
+            default_rgb_prefix,
+        )
         output_path = output_dir / f"CAMERA_{view_index:02d}.lws"
         with output_path.open("w", encoding="utf-8", newline="") as handle:
             handle.write("".join(scene_lines))
