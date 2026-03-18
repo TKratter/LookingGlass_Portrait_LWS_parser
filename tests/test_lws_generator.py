@@ -92,6 +92,64 @@ class LwsGeneratorTests(unittest.TestCase):
                 camera_zero_text,
             )
 
+    def test_generate_lws_files_uses_scene_number_for_render_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            source_path = temp_path / "Holo_H120_09t.lws"
+            output_dir = temp_path / "output"
+            source_text = build_sample_scene().replace(
+                "  2\n",
+                "  10\n",
+            ).replace(
+                "Key channel0_view0\n  Key channel0_view1",
+                "\n".join([f"Key channel0_view{i}" for i in range(10)]),
+            ).replace(
+                "Key channel1_view0\n  Key channel1_view1",
+                "\n".join([f"Key channel1_view{i}" for i in range(10)]),
+            ).replace(
+                "Key channel2_view0\n  Key channel2_view1",
+                "\n".join([f"Key channel2_view{i}" for i in range(10)]),
+            ).replace(
+                "Key channel3_view0\n  Key channel3_view1",
+                "\n".join([f"Key channel3_view{i}" for i in range(10)]),
+            ).replace(
+                "Key channel4_view0\n  Key channel4_view1",
+                "\n".join([f"Key channel4_view{i}" for i in range(10)]),
+            ).replace(
+                "Key channel5_view0\n  Key channel5_view1",
+                "\n".join([f"Key channel5_view{i}" for i in range(10)]),
+            ).replace(
+                "Key shift_view0\n      Key shift_view1",
+                "\n".join([f"      Key shift_view{i}" for i in range(10)]),
+            ).replace(
+                "SaveRGBImagesPrefix C:\\renders\\Matrix\n",
+                "SaveRGBImagesPrefix Z:\\3dHolo\\Renders\\H120\\H120\n",
+            )
+            source_text += (
+                "BufferList\n"
+                "{ BufferList\n"
+                "  { Group\n"
+                "    \"root\"\n"
+                "    { List\n"
+                "      \"Final_Render\"\n"
+                "      \"\"\n"
+                "      \"LW_JPEG(.jpg)\"\n"
+                "      \"\"\n"
+                "      \"Z:\\\\3dHolo\\\\Renders\\\\H120\"\n"
+                "      \"H120\"\n"
+                "      35\n"
+                "      3\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            )
+            source_path.write_text(source_text, encoding="utf-8")
+
+            result = generate_lws_files(source_path, output_dir, num_channels=6, num_views=10)
+            text = result.output_paths[9].read_text(encoding="utf-8")
+            self.assertIn("SaveRGBImagesPrefix Z:\\3dHolo\\Renders\\H120\\H120_09_\n", text)
+            self.assertIn('      "H120_09_"\n', text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -157,6 +157,64 @@ def _update_rgb_prefix(lines: Sequence[str], view_index: int) -> List[str]:
     return updated_lines
 
 
+def _split_prefix_path(prefix_value: str) -> tuple[str, str, str]:
+    normalized = prefix_value.rstrip("\\/")
+    last_backslash = normalized.rfind("\\")
+    last_forwardslash = normalized.rfind("/")
+    split_index = max(last_backslash, last_forwardslash)
+
+    if split_index == -1:
+        separator = "\\" if "\\" in prefix_value else "/"
+        if not separator.strip("/\\"):
+            separator = "\\"
+        return "", normalized, separator
+
+    directory = normalized[:split_index]
+    basename = normalized[split_index + 1 :]
+    separator = normalized[split_index]
+    return directory, basename, separator
+
+
+def _join_prefix_path(directory: str, basename: str, separator: str) -> str:
+    if not directory:
+        return basename
+    return f"{directory}{separator}{basename}"
+
+
+def _derive_render_basename(
+    existing_basename: str,
+    view_index: int,
+) -> str:
+    cleaned_existing = re.sub(r"_CAMERA\d+_$", "", existing_basename).rstrip("_")
+    if re.search(rf"_{view_index:02d}_?$", existing_basename):
+        return existing_basename if existing_basename.endswith("_") else f"{existing_basename}_"
+
+    if re.search(r"\d", cleaned_existing):
+        return f"{cleaned_existing}_{view_index:02d}_"
+
+    if existing_basename != cleaned_existing:
+        return f"{cleaned_existing}_CAMERA{view_index:02d}_"
+    return f"{cleaned_existing}_CAMERA{view_index:02d}_"
+
+
+def _update_buffer_list_name(
+    lines: Sequence[str],
+    existing_basename: str,
+    new_basename: str,
+) -> List[str]:
+    updated_lines = list(lines)
+    old_line = f'      "{existing_basename}"'
+    new_line = f'      "{new_basename}"'
+
+    for index, line in enumerate(updated_lines):
+        if line.rstrip("\r\n") == old_line:
+            newline = "\r\n" if line.endswith("\r\n") else "\n"
+            updated_lines[index] = f'{new_line}{newline}'
+            break
+
+    return updated_lines
+
+
 def _insert_rgb_prefix(
     lines: Sequence[str],
     rgb_prefix_base: str,
@@ -186,17 +244,32 @@ def _ensure_rgb_prefix(
     rgb_prefix_base: str,
 ) -> List[str]:
     if any("SaveRGBImagesPrefix" in line for line in lines):
-        return _update_rgb_prefix(lines, view_index)
+        updated_lines = list(lines)
+        rgb_prefix_index = _find_line_with_substring(updated_lines, "SaveRGBImagesPrefix")
+        line = updated_lines[rgb_prefix_index]
+        newline = "\r\n" if line.endswith("\r\n") else "\n"
+        stripped = line.rstrip("\r\n")
+        prefix_key, separator, prefix_value = stripped.partition(" ")
+        if not separator:
+            raise LwsGeneratorError("SaveRGBImagesPrefix line is malformed.")
+
+        directory, existing_basename, path_separator = _split_prefix_path(prefix_value)
+        new_basename = _derive_render_basename(existing_basename, view_index)
+        updated_lines[rgb_prefix_index] = (
+            f"{prefix_key} {_join_prefix_path(directory, new_basename, path_separator)}{newline}"
+        )
+        return _update_buffer_list_name(updated_lines, existing_basename, new_basename)
 
     if lines:
         newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
     else:
         newline = "\n"
 
-    cleaned_prefix = re.sub(r"_CAMERA\d+_$", "", rgb_prefix_base)
+    directory, existing_basename, path_separator = _split_prefix_path(rgb_prefix_base)
+    new_basename = _derive_render_basename(existing_basename, view_index)
     inserted_lines = _insert_rgb_prefix(
         lines,
-        f"{cleaned_prefix}_CAMERA{view_index:02d}_",
+        _join_prefix_path(directory, new_basename, path_separator),
         newline,
     )
     return inserted_lines
@@ -253,13 +326,13 @@ def generate_lws_files(
     default_rgb_prefix = str(output_dir / source_path.stem)
 
     for view_index in range(num_views):
+        output_path = output_dir / f"CAMERA_{view_index:02d}.lws"
         scene_lines = create_scene_lines_for_view(
             lines,
             envelopes,
             view_index,
             default_rgb_prefix,
         )
-        output_path = output_dir / f"CAMERA_{view_index:02d}.lws"
         with output_path.open("w", encoding="utf-8", newline="") as handle:
             handle.write("".join(scene_lines))
         output_paths.append(output_path)
