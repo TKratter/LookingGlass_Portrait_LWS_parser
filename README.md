@@ -83,7 +83,12 @@ If the render folder contains multiple prefixes, pass `--sequence-prefix`.
 The quilt tool scans for files matching this pattern:
 
 ```text
-PREFIX_CAMERA00_000.jpg
+arbitrary_name_00_000.jpeg
 ```
 
-For the Portrait workflow, it expects 48 camera renders per animation frame, using cameras `00` through `47`.
+The last two numeric groups are interpreted as:
+
+- scene number
+- frame number
+
+For the Portrait workflow, it expects scenes `00` through `47` for every frame. If frames or scenes are missing, the scanner and builder report exactly which ones are missing.

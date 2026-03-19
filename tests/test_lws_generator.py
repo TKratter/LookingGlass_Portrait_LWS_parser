@@ -70,7 +70,7 @@ class LwsGeneratorTests(unittest.TestCase):
             self.assertIn("  Key channel0_view1\n", camera_one_text)
             self.assertIn("  Key channel5_view1\n", camera_one_text)
             self.assertIn("      Key shift_view1\n", camera_one_text)
-            self.assertIn("SaveRGBImagesPrefix C:\\renders\\Matrix_CAMERA01_\n", camera_one_text)
+            self.assertIn("SaveRGBImagesPrefix C:\\renders\\Matrix_CAMERA01\n", camera_one_text)
             self.assertNotIn("channel0_view0", camera_one_text)
 
     def test_generate_lws_files_inserts_rgb_prefix_when_missing(self) -> None:
@@ -88,7 +88,7 @@ class LwsGeneratorTests(unittest.TestCase):
 
             camera_zero_text = (output_dir / "CAMERA_00.lws").read_text(encoding="utf-8")
             self.assertIn(
-                f"SaveRGBImagesPrefix {output_dir / source_path.stem}_CAMERA00_\n",
+                f"SaveRGBImagesPrefix {output_dir / source_path.stem}_CAMERA00\n",
                 camera_zero_text,
             )
 
@@ -147,8 +147,8 @@ class LwsGeneratorTests(unittest.TestCase):
 
             result = generate_lws_files(source_path, output_dir, num_channels=6, num_views=10)
             text = result.output_paths[9].read_text(encoding="utf-8")
-            self.assertIn("SaveRGBImagesPrefix Z:\\3dHolo\\Renders\\H120\\H120_09_\n", text)
-            self.assertIn('      "H120_09_"\n', text)
+            self.assertIn("SaveRGBImagesPrefix Z:\\3dHolo\\Renders\\H120\\H120_09\n", text)
+            self.assertIn('      "H120_09"\n', text)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,13 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from .quilt_builder import QuiltBuildResult, build_quilts, scan_render_sequences
+from .quilt_builder import (
+    QuiltBuildResult,
+    build_quilts,
+    describe_validation_issues,
+    scan_render_sequences,
+    validate_render_sequence,
+)
 
 
 class QuiltMakerApp(tk.Tk):
@@ -40,7 +46,7 @@ class QuiltMakerApp(tk.Tk):
 
         ttk.Label(
             container,
-            text="Build Portrait quilts from files named like PREFIX_CAMERA00_000.jpg.",
+            text="Build Portrait quilts from files named like arbitrary_name_00_000.jpeg.",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
 
         ttk.Label(container, text="Rendered Images").grid(row=1, column=0, sticky="w", pady=4)
@@ -199,9 +205,24 @@ class QuiltMakerApp(tk.Tk):
             return
 
         self.output_name_var.set(sequence_name)
+        validation = validate_render_sequence(sequence, expected_views=48)
+        complete_frames = [
+            frame
+            for frame in validation.expected_frames
+            if frame not in validation.missing_frames
+            and frame not in validation.missing_scenes_by_frame
+            and frame not in validation.extra_scenes_by_frame
+        ]
         self._append_log(
-            f"Selected sequence '{sequence_name}' with {len(sequence.images_by_frame)} frame groups."
+            f"Selected sequence '{sequence_name}' with {len(sequence.images_by_frame)} detected frame groups."
         )
+        if validation.has_issues:
+            self.status_var.set("Sequence scanned. Missing scenes or frames were found.")
+            self._append_log(describe_validation_issues(sequence, validation))
+        else:
+            self.status_var.set(
+                f"Sequence scanned. {len(complete_frames)} complete frame set(s) ready."
+            )
 
     def _start_build(self) -> None:
         if self._worker_thread is not None and self._worker_thread.is_alive():

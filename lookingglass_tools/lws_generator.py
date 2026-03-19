@@ -185,16 +185,16 @@ def _derive_render_basename(
     existing_basename: str,
     view_index: int,
 ) -> str:
-    cleaned_existing = re.sub(r"_CAMERA\d+_$", "", existing_basename).rstrip("_")
+    cleaned_existing = re.sub(r"_CAMERA\d+_?$", "", existing_basename).rstrip("_")
     if re.search(rf"_{view_index:02d}_?$", existing_basename):
-        return existing_basename if existing_basename.endswith("_") else f"{existing_basename}_"
+        return existing_basename.rstrip("_")
 
     if re.search(r"\d", cleaned_existing):
-        return f"{cleaned_existing}_{view_index:02d}_"
+        return f"{cleaned_existing}_{view_index:02d}"
 
     if existing_basename != cleaned_existing:
-        return f"{cleaned_existing}_CAMERA{view_index:02d}_"
-    return f"{cleaned_existing}_CAMERA{view_index:02d}_"
+        return f"{cleaned_existing}_CAMERA{view_index:02d}"
+    return f"{cleaned_existing}_CAMERA{view_index:02d}"
 
 
 def _update_buffer_list_name(

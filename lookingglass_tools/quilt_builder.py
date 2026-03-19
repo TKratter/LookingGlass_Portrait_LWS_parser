@@ -10,7 +10,7 @@ from PIL import Image
 
 ProgressCallback = Callable[[str], None]
 RENDER_FILENAME_PATTERN = re.compile(
-    r"^(?P<prefix>.+?)_CAMERA(?P<camera>\d+)_(?P<frame>\d+)\.(?P<extension>[^.]+)$",
+    r"^(?P<prefix>.+)_(?P<scene>\d+)_(?P<frame>\d+)\.(?P<extension>jpe?g|png)$",
     re.IGNORECASE,
 )
 
@@ -23,7 +23,7 @@ class QuiltBuilderError(ValueError):
 class RenderSequence:
     prefix: str
     images_by_frame: Mapping[int, Mapping[int, Path]]
-    camera_digits: int
+    scene_digits: int
     frame_digits: int
     extensions: Sequence[str]
 
@@ -36,6 +36,20 @@ class QuiltBuildResult:
     sequence_prefix: str
 
 
+@dataclass(frozen=True)
+class SequenceValidation:
+    expected_frames: Sequence[int]
+    missing_frames: Sequence[int]
+    missing_scenes_by_frame: Mapping[int, Sequence[int]]
+    extra_scenes_by_frame: Mapping[int, Sequence[int]]
+
+    @property
+    def has_issues(self) -> bool:
+        return bool(
+            self.missing_frames or self.missing_scenes_by_frame or self.extra_scenes_by_frame
+        )
+
+
 def scan_render_sequences(images_dir: Path | str) -> Dict[str, RenderSequence]:
     images_dir = Path(images_dir)
     if not images_dir.is_dir():
@@ -44,7 +58,7 @@ def scan_render_sequences(images_dir: Path | str) -> Dict[str, RenderSequence]:
     grouped_images: Dict[str, Dict[int, Dict[int, Path]]] = defaultdict(
         lambda: defaultdict(dict)
     )
-    camera_digits: Dict[str, int] = defaultdict(int)
+    scene_digits: Dict[str, int] = defaultdict(int)
     frame_digits: Dict[str, int] = defaultdict(int)
     extensions: Dict[str, set[str]] = defaultdict(set)
 
@@ -57,32 +71,32 @@ def scan_render_sequences(images_dir: Path | str) -> Dict[str, RenderSequence]:
             continue
 
         prefix = match.group("prefix")
-        camera_text = match.group("camera")
+        scene_text = match.group("scene")
         frame_text = match.group("frame")
-        camera = int(camera_text)
+        scene = int(scene_text)
         frame = int(frame_text)
 
-        if camera in grouped_images[prefix][frame]:
+        if scene in grouped_images[prefix][frame]:
             raise QuiltBuilderError(
-                f"Duplicate render found for prefix '{prefix}', frame {frame}, camera {camera}."
+                f"Duplicate render found for prefix '{prefix}', frame {frame}, scene {scene}."
             )
 
-        grouped_images[prefix][frame][camera] = child
-        camera_digits[prefix] = max(camera_digits[prefix], len(camera_text))
+        grouped_images[prefix][frame][scene] = child
+        scene_digits[prefix] = max(scene_digits[prefix], len(scene_text))
         frame_digits[prefix] = max(frame_digits[prefix], len(frame_text))
         extensions[prefix].add(match.group("extension").lower())
 
     if not grouped_images:
         raise QuiltBuilderError(
-            "No rendered images were found. Expected names like PREFIX_CAMERA00_000.jpg."
+            "No rendered images were found. Expected names like arbitrary_name_00_000.jpeg."
         )
 
     sequences: Dict[str, RenderSequence] = {}
     for prefix, frames in grouped_images.items():
         sequences[prefix] = RenderSequence(
             prefix=prefix,
-            images_by_frame={frame: dict(cameras) for frame, cameras in frames.items()},
-            camera_digits=camera_digits[prefix],
+            images_by_frame={frame: dict(scenes) for frame, scenes in frames.items()},
+            scene_digits=scene_digits[prefix],
             frame_digits=frame_digits[prefix],
             extensions=sorted(extensions[prefix]),
         )
@@ -95,13 +109,103 @@ def _format_float(value: float) -> str:
     return formatted or "0"
 
 
-def _describe_frame_issue(frame: int, missing: Sequence[int], extra: Sequence[int]) -> str:
+def _format_number_list(values: Sequence[int], digits: int) -> str:
+    return ", ".join(str(value).zfill(digits) for value in values)
+
+
+def _describe_frame_issue(
+    frame: int,
+    missing: Sequence[int],
+    extra: Sequence[int],
+    scene_digits: int,
+    frame_digits: int,
+) -> str:
     issues: List[str] = []
     if missing:
-        issues.append(f"missing cameras {', '.join(str(value) for value in missing)}")
+        issues.append(f"missing scenes {_format_number_list(missing, scene_digits)}")
     if extra:
-        issues.append(f"unexpected cameras {', '.join(str(value) for value in extra)}")
-    return f"Frame {frame}: {'; '.join(issues)}"
+        issues.append(f"unexpected scenes {_format_number_list(extra, scene_digits)}")
+    return f"Frame {str(frame).zfill(frame_digits)}: {'; '.join(issues)}"
+
+
+def validate_render_sequence(
+    sequence: RenderSequence,
+    expected_views: int,
+) -> SequenceValidation:
+    frame_numbers = sorted(sequence.images_by_frame)
+    if not frame_numbers:
+        return SequenceValidation([], [], {}, {})
+
+    expected_frames = list(range(min(frame_numbers), max(frame_numbers) + 1))
+    missing_frames = [
+        frame for frame in expected_frames if frame not in sequence.images_by_frame
+    ]
+
+    expected_scenes = set(range(expected_views))
+    missing_scenes_by_frame: Dict[int, Sequence[int]] = {}
+    extra_scenes_by_frame: Dict[int, Sequence[int]] = {}
+
+    for frame in frame_numbers:
+        scenes = set(sequence.images_by_frame[frame])
+        missing_scenes = sorted(expected_scenes - scenes)
+        extra_scenes = sorted(scenes - expected_scenes)
+        if missing_scenes:
+            missing_scenes_by_frame[frame] = missing_scenes
+        if extra_scenes:
+            extra_scenes_by_frame[frame] = extra_scenes
+
+    return SequenceValidation(
+        expected_frames=expected_frames,
+        missing_frames=missing_frames,
+        missing_scenes_by_frame=missing_scenes_by_frame,
+        extra_scenes_by_frame=extra_scenes_by_frame,
+    )
+
+
+def describe_validation_issues(
+    sequence: RenderSequence,
+    validation: SequenceValidation,
+    limit: int = 12,
+) -> str:
+    lines: List[str] = []
+    scene_digits = max(2, sequence.scene_digits)
+    frame_digits = max(1, sequence.frame_digits)
+
+    if validation.missing_frames:
+        lines.append(
+            "Missing frame numbers: "
+            + _format_number_list(validation.missing_frames, frame_digits)
+        )
+
+    for frame in sorted(validation.missing_scenes_by_frame):
+        lines.append(
+            _describe_frame_issue(
+                frame,
+                validation.missing_scenes_by_frame[frame],
+                validation.extra_scenes_by_frame.get(frame, []),
+                scene_digits,
+                frame_digits,
+            )
+        )
+
+    for frame in sorted(validation.extra_scenes_by_frame):
+        if frame in validation.missing_scenes_by_frame:
+            continue
+        lines.append(
+            _describe_frame_issue(
+                frame,
+                [],
+                validation.extra_scenes_by_frame[frame],
+                scene_digits,
+                frame_digits,
+            )
+        )
+
+    if not lines:
+        return "No missing scenes or frames detected."
+    if len(lines) > limit:
+        return "\n".join(lines[:limit] + ["..."])
+    return "\n".join(lines)
 
 
 def build_quilts(
@@ -137,27 +241,23 @@ def build_quilts(
             ) from exc
 
     expected_views = rows * columns
-    expected_cameras = set(range(expected_views))
+    validation = validate_render_sequence(sequence, expected_views)
     complete_frames: List[int] = []
     skipped_frames: List[int] = []
-    issues: List[str] = []
 
-    for frame in sorted(sequence.images_by_frame):
-        cameras = set(sequence.images_by_frame[frame])
-        missing = sorted(expected_cameras - cameras)
-        extra = sorted(cameras - expected_cameras)
-        if missing or extra:
+    for frame in validation.expected_frames:
+        if frame in validation.missing_frames:
             skipped_frames.append(frame)
-            issues.append(_describe_frame_issue(frame, missing, extra))
-        else:
-            complete_frames.append(frame)
+            continue
+        if frame in validation.missing_scenes_by_frame or frame in validation.extra_scenes_by_frame:
+            skipped_frames.append(frame)
+            continue
+        complete_frames.append(frame)
 
-    if issues and not skip_incomplete:
-        sample = "\n".join(issues[:10])
-        if len(issues) > 10:
-            sample += "\n..."
+    if validation.has_issues and not skip_incomplete:
         raise QuiltBuilderError(
-            "The render folder contains incomplete frame sets.\n" + sample
+            "The render folder is missing required scenes or frames.\n"
+            + describe_validation_issues(sequence, validation)
         )
 
     if not complete_frames:
